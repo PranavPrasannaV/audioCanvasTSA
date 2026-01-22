@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Voice Canvas",
+  "description": "A collaborative, voice-controlled generative canvas powered by Gemini Live API. Speak to draw, edit, and analyze the canvas in real-time.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
