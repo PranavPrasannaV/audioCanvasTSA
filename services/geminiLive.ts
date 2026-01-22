@@ -63,6 +63,26 @@ export const clearBoardTool: FunctionDeclaration = {
   },
 };
 
+export const exportCanvasTool: FunctionDeclaration = {
+  name: 'export_canvas',
+  description: 'Export/download the canvas as an image file. Use this when the user asks to export, download, or save the canvas.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      format: {
+        type: Type.STRING,
+        enum: ['svg', 'png', 'jpg'],
+        description: 'The image format to export as'
+      },
+      filename: {
+        type: Type.STRING,
+        description: 'Optional filename (without extension)'
+      },
+    },
+    required: ['format'],
+  },
+};
+
 export const SYSTEM_INSTRUCTION = `
   You are a collaborative creative assistant and a PERFECTIONIST.
   You help users draw on a shared digital canvas (100x100 units).
@@ -78,6 +98,11 @@ export const SYSTEM_INSTRUCTION = `
   - YOU MUST DELETE THE MISTAKE FIRST using the 'remove_element' tool (at the location of the error).
   - OR, if the board is cluttered with mistakes, use 'clear_board' and redraw the scene from scratch.
   - Be precise with coordinates.
+  
+  EXPORT FEATURE:
+  - When the user asks to "export", "download", or "save" the canvas, use the 'export_canvas' tool.
+  - Supported formats: svg, png, jpg
+  - Example: "export as png" → call export_canvas with format="png"
   
   When asked "what is this?" describe what you see visually.
   Be concise, enthusiastic, and helpful.
@@ -99,7 +124,7 @@ export class GeminiLiveService {
   private currentOutputTranscription = '';
 
   constructor(
-    apiKey: string, 
+    apiKey: string,
     toolsHandler: (name: string, args: any) => void,
     onTranscript: (message: ChatMessage) => void
   ) {
@@ -115,7 +140,7 @@ export class GeminiLiveService {
     this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
       sampleRate: 24000,
     });
-    
+
     // Resume audio contexts if suspended (browser policy)
     if (this.outputAudioContext.state === 'suspended') {
       await this.outputAudioContext.resume();
@@ -130,7 +155,7 @@ export class GeminiLiveService {
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } },
         },
-        tools: [{ functionDeclarations: [drawShapeTool, addTextTool, removeElementTool, clearBoardTool] }],
+        tools: [{ functionDeclarations: [drawShapeTool, addTextTool, removeElementTool, clearBoardTool, exportCanvasTool] }],
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         systemInstruction: SYSTEM_INSTRUCTION,
@@ -142,95 +167,95 @@ export class GeminiLiveService {
       config: config.config,
       callbacks: {
         onopen: async () => {
-            console.log("Session opened");
-            // Start Audio Stream
-            const source = this.inputAudioContext!.createMediaStreamSource(this.stream!);
-            const processor = this.inputAudioContext!.createScriptProcessor(4096, 1, 1);
-            
-            processor.onaudioprocess = (e) => {
-                const inputData = e.inputBuffer.getChannelData(0);
-                const blob = createPcmBlob(inputData);
-                sessionPromise.then(session => session.sendRealtimeInput({ media: blob }));
-            };
-            
-            source.connect(processor);
-            processor.connect(this.inputAudioContext!.destination);
+          console.log("Session opened");
+          // Start Audio Stream
+          const source = this.inputAudioContext!.createMediaStreamSource(this.stream!);
+          const processor = this.inputAudioContext!.createScriptProcessor(4096, 1, 1);
 
-            // Start Video Stream (Canvas Snapshots)
-            // 1 FPS is enough for context
-            this.frameInterval = window.setInterval(async () => {
-                const blob = await getCanvasSnapshot();
-                if (blob) {
-                    const base64 = await blobToBase64(blob);
-                    sessionPromise.then(session => session.sendRealtimeInput({ 
-                        media: { 
-                            mimeType: 'image/jpeg', 
-                            data: base64 
-                        } 
-                    }));
+          processor.onaudioprocess = (e) => {
+            const inputData = e.inputBuffer.getChannelData(0);
+            const blob = createPcmBlob(inputData);
+            sessionPromise.then(session => session.sendRealtimeInput({ media: blob }));
+          };
+
+          source.connect(processor);
+          processor.connect(this.inputAudioContext!.destination);
+
+          // Start Video Stream (Canvas Snapshots)
+          // 1 FPS is enough for context
+          this.frameInterval = window.setInterval(async () => {
+            const blob = await getCanvasSnapshot();
+            if (blob) {
+              const base64 = await blobToBase64(blob);
+              sessionPromise.then(session => session.sendRealtimeInput({
+                media: {
+                  mimeType: 'image/jpeg',
+                  data: base64
                 }
-            }, 1000);
+              }));
+            }
+          }, 1000);
         },
         onmessage: async (msg: LiveServerMessage) => {
-            // Handle Tool Calls
-            if (msg.toolCall) {
-                for (const fc of msg.toolCall.functionCalls) {
-                    this.toolsHandler(fc.name, fc.args);
-                    // Send success response
-                    sessionPromise.then(session => session.sendToolResponse({
-                        functionResponses: {
-                            id: fc.id,
-                            name: fc.name,
-                            response: { result: 'success' }
-                        }
-                    }));
+          // Handle Tool Calls
+          if (msg.toolCall) {
+            for (const fc of msg.toolCall.functionCalls) {
+              this.toolsHandler(fc.name, fc.args);
+              // Send success response
+              sessionPromise.then(session => session.sendToolResponse({
+                functionResponses: {
+                  id: fc.id,
+                  name: fc.name,
+                  response: { result: 'success' }
                 }
+              }));
             }
+          }
 
-            // Handle Transcriptions
-            if (msg.serverContent?.inputTranscription) {
-              const text = msg.serverContent.inputTranscription.text;
-              this.currentInputTranscription += text;
-            }
-            if (msg.serverContent?.outputTranscription) {
-              const text = msg.serverContent.outputTranscription.text;
-              this.currentOutputTranscription += text;
-            }
+          // Handle Transcriptions
+          if (msg.serverContent?.inputTranscription) {
+            const text = msg.serverContent.inputTranscription.text;
+            this.currentInputTranscription += text;
+          }
+          if (msg.serverContent?.outputTranscription) {
+            const text = msg.serverContent.outputTranscription.text;
+            this.currentOutputTranscription += text;
+          }
 
-            if (msg.serverContent?.turnComplete) {
-              if (this.currentInputTranscription.trim()) {
-                this.onTranscript({
-                  id: crypto.randomUUID(),
-                  role: 'user',
-                  text: this.currentInputTranscription,
-                  isFinal: true
-                });
-                this.currentInputTranscription = '';
-              }
-              if (this.currentOutputTranscription.trim()) {
-                this.onTranscript({
-                  id: crypto.randomUUID(),
-                  role: 'model',
-                  text: this.currentOutputTranscription,
-                  isFinal: true
-                });
-                this.currentOutputTranscription = '';
-              }
+          if (msg.serverContent?.turnComplete) {
+            if (this.currentInputTranscription.trim()) {
+              this.onTranscript({
+                id: crypto.randomUUID(),
+                role: 'user',
+                text: this.currentInputTranscription,
+                isFinal: true
+              });
+              this.currentInputTranscription = '';
             }
+            if (this.currentOutputTranscription.trim()) {
+              this.onTranscript({
+                id: crypto.randomUUID(),
+                role: 'model',
+                text: this.currentOutputTranscription,
+                isFinal: true
+              });
+              this.currentOutputTranscription = '';
+            }
+          }
 
-            // Handle Audio Output
-            if (msg.serverContent?.modelTurn?.parts?.[0]?.inlineData) {
-                const audioData = msg.serverContent.modelTurn.parts[0].inlineData.data;
-                this.playAudio(audioData);
-            }
+          // Handle Audio Output
+          if (msg.serverContent?.modelTurn?.parts?.[0]?.inlineData) {
+            const audioData = msg.serverContent.modelTurn.parts[0].inlineData.data;
+            this.playAudio(audioData);
+          }
         },
         onclose: () => {
-            console.log("Session closed");
-            this.cleanup();
+          console.log("Session closed");
+          this.cleanup();
         },
         onerror: (err) => {
-            console.error("Session error", err);
-            this.cleanup();
+          console.error("Session error", err);
+          this.cleanup();
         }
       }
     });
@@ -252,31 +277,31 @@ export class GeminiLiveService {
 
   async playAudio(base64Data: string) {
     if (!this.outputAudioContext) return;
-    
+
     this.nextStartTime = Math.max(this.outputAudioContext.currentTime, this.nextStartTime);
-    
+
     try {
-        const audioBuffer = await decodeAudioData(
-            base64ToUint8Array(base64Data),
-            this.outputAudioContext,
-            24000
-        );
-        
-        const source = this.outputAudioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(this.outputAudioContext.destination);
-        source.start(this.nextStartTime);
-        
-        this.nextStartTime += audioBuffer.duration;
+      const audioBuffer = await decodeAudioData(
+        base64ToUint8Array(base64Data),
+        this.outputAudioContext,
+        24000
+      );
+
+      const source = this.outputAudioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.outputAudioContext.destination);
+      source.start(this.nextStartTime);
+
+      this.nextStartTime += audioBuffer.duration;
     } catch (e) {
-        console.error("Error decoding audio", e);
+      console.error("Error decoding audio", e);
     }
   }
 
   async disconnect() {
     if (this.session) {
-        const session = await this.session;
-        session.close();
+      const session = await this.session;
+      session.close();
     }
     this.cleanup();
   }
@@ -286,7 +311,7 @@ export class GeminiLiveService {
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
     if (this.inputAudioContext) this.inputAudioContext.close();
     if (this.outputAudioContext) this.outputAudioContext.close();
-    
+
     this.frameInterval = null;
     this.stream = null;
     this.inputAudioContext = null;
